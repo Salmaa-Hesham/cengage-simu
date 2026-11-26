@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cengage-blue
+  labels:
+    app: cengage
+    version: blue
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cengage
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: cengage
+        version: blue
+    spec:
+      containers:
+      - name: tomcat-app
+        image: salmahesham1114/cengage-app:v1.0.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: APP_VERSION
+          value: "v1.0.0"
+        - name: APP_COLOR
+          value: "blue"
+        envFrom:
+        - configMapRef:
+            name: cengage-config
+        - secretRef:
+            name: db-credentials
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "768Mi"
+          requests:
+            cpu: "200m"
+            memory: "384Mi"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 5
