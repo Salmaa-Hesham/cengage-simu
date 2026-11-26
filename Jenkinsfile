@@ -1,5 +1,16 @@
 pipeline {
-    agent any
+    agent {
+        kubernetes {
+            cloud 'kubernetes'
+            namespace 'jenkins'
+            defaultContainer 'kubectl'
+            yamlFile 'ci/jenkins/agent.yaml'
+        }
+    }
+
+    environment {
+        APP_NAMESPACE = 'default'
+    }
 
     parameters {
         choice(
@@ -21,10 +32,10 @@ pipeline {
             }
             steps {
                 echo "Applying k8s/app-${params.TARGET_COLOR}.yaml..."
-                sh "kubectl apply -f k8s/app-${params.TARGET_COLOR}.yaml"
+                sh "kubectl -n ${APP_NAMESPACE} apply -f k8s/app-${params.TARGET_COLOR}.yaml"
                 
                 echo "Waiting for cengage-${params.TARGET_COLOR} rollout..."
-                sh "kubectl rollout status deployment/cengage-${params.TARGET_COLOR} --timeout=90s"
+                sh "kubectl -n ${APP_NAMESPACE} rollout status deployment/cengage-${params.TARGET_COLOR} --timeout=90s"
             }
         }
 
@@ -34,9 +45,9 @@ pipeline {
             }
             steps {
                 sh """
-                    POD=\$(kubectl get pods -l app=cengage,version=${params.TARGET_COLOR} -o jsonpath='{.items[0].metadata.name}')
+                    POD=\$(kubectl -n ${APP_NAMESPACE} get pods -l app=cengage,version=${params.TARGET_COLOR} -o jsonpath='{.items[0].metadata.name}')
                     echo "Checking health on pod: \${POD}"
-                    kubectl exec \${POD} -- curl -s http://localhost:8080/health || true
+                    kubectl -n ${APP_NAMESPACE} exec \${POD} -- curl -s http://localhost:8080/health || true
                 """
             }
         }
@@ -47,14 +58,14 @@ pipeline {
             }
             steps {
                 echo "Switching cengage-service selector to version: ${params.TARGET_COLOR}..."
-                sh "kubectl patch service cengage-service -p '{\"spec\":{\"selector\":{\"app\":\"cengage\",\"version\":\"${params.TARGET_COLOR}\"}}}'"
+                sh "kubectl -n ${APP_NAMESPACE} patch service cengage-service -p '{\"spec\":{\"selector\":{\"app\":\"cengage\",\"version\":\"${params.TARGET_COLOR}\"}}}'"
             }
         }
 
         stage('Verify Active Service') {
             steps {
-                sh "kubectl get service cengage-service -o wide"
-                sh "kubectl get pods -l app=cengage -o wide"
+                sh "kubectl -n ${APP_NAMESPACE} get service cengage-service -o wide"
+                sh "kubectl -n ${APP_NAMESPACE} get pods -l app=cengage -o wide"
             }
         }
     }
