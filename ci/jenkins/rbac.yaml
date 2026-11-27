@@ -54,11 +54,18 @@ rules:
     resources: [pods]
     verbs: [get, list, watch]
   - apiGroups: [""]
-    resources: [pods/exec]
+    resources: [services, configmaps]
+    verbs: [get, list, create, patch, update]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [db-credentials]
+    verbs: [get, patch, update]
+  - apiGroups: [""]
+    resources: [secrets]
     verbs: [create]
   - apiGroups: [""]
-    resources: [services]
-    verbs: [get, list, patch]
+    resources: [events]
+    verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
