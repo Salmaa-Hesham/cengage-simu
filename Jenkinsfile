@@ -12,67 +12,70 @@ pipeline {
         APP_NAMESPACE = 'default'
     }
 
-    parameters {
-        choice(
-            name: 'TARGET_COLOR',
-            choices: ['blue', 'green'],
-            description: 'Target environment to deploy or switch to'
-        )
-        choice(
-            name: 'ACTION',
-            choices: ['deploy_and_switch', 'switch_traffic_only', 'deploy_only'],
-            description: 'Action to perform'
-        )
+    options {
+        disableConcurrentBuilds()
+        timeout(time: 20, unit: 'MINUTES')
     }
 
     stages {
-        stage('Deploy Target Application') {
-            when {
-                expression { params.ACTION == 'deploy_and_switch' || params.ACTION == 'deploy_only' }
-            }
+        stage('Prepare Configuration') {
             steps {
-                echo "Applying k8s/app-${params.TARGET_COLOR}.yaml..."
-                sh "kubectl -n ${APP_NAMESPACE} apply -f k8s/app-${params.TARGET_COLOR}.yaml"
-                
-                echo "Waiting for cengage-${params.TARGET_COLOR} rollout..."
-                sh "kubectl -n ${APP_NAMESPACE} rollout status deployment/cengage-${params.TARGET_COLOR} --timeout=90s"
+                sh '''
+                    set -eu
+                    kubectl -n "$APP_NAMESPACE" apply -f k8s/secret.yaml
+                    kubectl -n "$APP_NAMESPACE" create configmap cengage-config \
+                        --from-env-file=k8s/app.env --dry-run=client -o yaml > cengage-config.generated.yaml
+                    kubectl -n "$APP_NAMESPACE" apply -f cengage-config.generated.yaml
+                    rm cengage-config.generated.yaml
+                '''
             }
         }
 
-        stage('Verify Health') {
-            when {
-                expression { params.ACTION == 'deploy_and_switch' || params.ACTION == 'deploy_only' }
-            }
+        stage('Deploy Databases') {
             steps {
-                sh """
-                    POD=\$(kubectl -n ${APP_NAMESPACE} get pods -l app=cengage,version=${params.TARGET_COLOR} -o jsonpath='{.items[0].metadata.name}')
-                    echo "Checking health on pod: \${POD}"
-                    kubectl -n ${APP_NAMESPACE} exec \${POD} -- curl -s http://localhost:8080/health || true
-                """
+                sh '''
+                    set -eu
+                    kubectl -n "$APP_NAMESPACE" apply -f k8s/catalog-db.yaml
+                    kubectl -n "$APP_NAMESPACE" apply -f k8s/user-db.yaml
+                    kubectl -n "$APP_NAMESPACE" rollout status deployment/catalog-db --timeout=300s
+                    kubectl -n "$APP_NAMESPACE" rollout status deployment/user-db --timeout=300s
+                '''
             }
         }
 
-        stage('Switch Traffic (Blue/Green)') {
-            when {
-                expression { params.ACTION == 'deploy_and_switch' || params.ACTION == 'switch_traffic_only' }
-            }
+        stage('Deploy Application') {
             steps {
-                echo "Switching cengage-service selector to version: ${params.TARGET_COLOR}..."
-                sh "kubectl -n ${APP_NAMESPACE} patch service cengage-service -p '{\"spec\":{\"selector\":{\"app\":\"cengage\",\"version\":\"${params.TARGET_COLOR}\"}}}'"
+                // Reuse the existing deployment as the single application environment.
+                sh '''
+                    set -eu
+                    kubectl -n "$APP_NAMESPACE" apply -f k8s/app-blue.yaml
+                    kubectl -n "$APP_NAMESPACE" rollout status deployment/cengage-blue --timeout=300s
+                    kubectl -n "$APP_NAMESPACE" apply -f k8s/app-service.yaml
+                '''
             }
         }
 
-        stage('Verify Active Service') {
+        stage('Show Deployment') {
             steps {
-                sh "kubectl -n ${APP_NAMESPACE} get service cengage-service -o wide"
-                sh "kubectl -n ${APP_NAMESPACE} get pods -l app=cengage -o wide"
+                sh '''
+                    set -eu
+                    kubectl -n "$APP_NAMESPACE" get deployments
+                    kubectl -n "$APP_NAMESPACE" get pods -o wide
+                    kubectl -n "$APP_NAMESPACE" get service cengage-service
+                '''
             }
         }
     }
 
     post {
         success {
-            echo "Successfully routed traffic to ${params.TARGET_COLOR} at http://192.168.56.111:30080"
+            echo 'Application deployed: http://192.168.56.111:30080'
+        }
+        failure {
+            sh '''
+                kubectl -n "$APP_NAMESPACE" get pods -o wide || true
+                kubectl -n "$APP_NAMESPACE" get events --sort-by=.metadata.creationTimestamp || true
+            '''
         }
     }
 }
