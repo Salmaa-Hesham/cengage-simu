@@ -17,6 +17,7 @@ public class CatalogDbManager {
             String pass = System.getenv().getOrDefault("CATALOG_DB_PASS", "postgres123");
 
             HikariConfig config = new HikariConfig();
+            config.setDriverClassName("org.postgresql.Driver");
             config.setJdbcUrl("jdbc:postgresql://" + host + ":" + port + "/" + dbName);
             config.setUsername(user);
             config.setPassword(pass);
